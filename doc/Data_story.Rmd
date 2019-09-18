@@ -1,0 +1,254 @@
+---
+title: 'Data_story: What did lyrics tell us?'
+author: "Ting Cai"
+date: "2019/9/15"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+### Load all the required libraries
+
+```{r load libraries, warning=FALSE, message=FALSE, echo = FALSE}
+library(reshape2)
+library(tm)
+library(plyr)
+library(dplyr)
+library(tidytext)
+library(tidyverse)
+library(wordcloud)
+library(wordcloud2)
+library(DT)
+library(ngram)
+library(ggplot2)
+library(textdata)
+```
+
+
+### Load the lyrics data and artist data and combine them
+
+```{r loading and combining data, warning=FALSE, message=FALSE, echo = FALSE}
+# load processed lyrics data
+load('./processed_lyrics.RData') 
+# load artist data
+dt_artist <- read.csv('../STATGR5243/artists.csv')
+dt_artist <- dt_artist %>% 
+  select(artist = Artist, 
+         intro = Intro, 
+         formed = Formed, 
+         members = Members, 
+         origin = Origin)
+
+# comine data and remove missing values or unreasonable values
+data <- 
+  dt_lyrics %>%
+  inner_join(dt_artist, by = "artist") %>%
+  drop_na() %>%
+  filter(year >= 1968 & year <= 2016) %>%
+  filter(genre != "Not Available") %>%
+  filter(!as.character(origin) %in% c("", "2005")) %>%
+  droplevels()
+head(data)
+```
+
+### General overview for key words using word cloud
+
+```{r,warning=FALSE, message=FALSE, echo = FALSE}
+wordcount_data <- data$stemmedwords %>% 
+  str_trim() %>% 
+  lapply(strsplit," ") %>% 
+  unlist() %>% table() %>% 
+  as.data.frame()
+
+colnames(wordcount_data) <- c("Keyword","Freq")
+
+sorted_data <- wordcount_data %>% 
+  dplyr::arrange(desc(Freq))
+
+wordcloud2(sorted_data[1:100,], size = 0.5)
+```
+
+The general word cloud tells us that the most frequent words in lyrics are 'love'and 'time'.
+
+
+### Does the word "love" appear so many times for every genre?
+
+
+```{r,warning=FALSE, message=FALSE, echo = FALSE}
+#define a funtion that can count word "love" frequency in a dataframe
+love_frequency <- function(d) {
+  wordcount <- d$stemmedwords %>% 
+    str_trim() %>% 
+    lapply(strsplit," ") %>% 
+    unlist() %>% table() %>% 
+    as.data.frame()
+  colnames(wordcount) <- c("Keyword","Freq")
+  wordcount <- wordcount %>% 
+    filter(Keyword == "love")
+  return (wordcount)
+}
+
+#define a function that can count "love" frequency in a specific genre
+genre_frequency <- function(g) {
+  g_data <- data %>%
+    filter(genre == g) %>%
+    love_frequency() %>%
+    add_column(genre = g) %>%
+    select(genre, Freq)
+  return (g_data)
+}
+
+#create data frames for different genres with frequencies
+Pop_data <- genre_frequency("Pop")
+Country_data <- genre_frequency("Country")
+Electronic_data <- genre_frequency("Electronic")
+Folk_data <- genre_frequency("Folk")
+HipHop_data <- genre_frequency("Hip-Hop")
+Indie_data <- genre_frequency("Indie")
+Jazz_data <- genre_frequency("Jazz")
+Metal_data <- genre_frequency("Metal")
+RB_data <- genre_frequency("R&B")
+Rock_data <- genre_frequency("Rock")
+genre_love <- do.call(rbind, list(Pop_data, Country_data, Electronic_data, Folk_data, HipHop_data, Indie_data, Jazz_data, Metal_data, RB_data, Rock_data))
+
+#barplot
+ggplot(data=genre_love, aes(x= reorder(genre, Freq), y=Freq)) +
+  geom_bar(stat="identity") + 
+  coord_flip() + 
+  labs(title = "word 'love' frequency in different genres")
+```
+
+It seems the word "love" appeared most popular in lyrics for Rock and Pop and almost not appear at all in Jazz. But we still did not know if this is the because the artist seldom use "love" in Jazz lyrics or the proportion of Jazz song in this dataset was small. 
+In order to explore deeper, we can plot counts for total words for each genre.
+
+```{r, echo = FALSE}
+#sum up total words for each genre
+data <-
+  data %>%
+  mutate(count = sapply(data$stemmedwords, wordcount))
+
+genre_count <- aggregate(data$count, by=list(genre=data$genre), sum) %>%
+  select(genre, count = x)
+
+#barplot
+ggplot(data=genre_count, aes(x= reorder(genre, count), y=count)) +
+  geom_bar(stat="identity") + 
+  coord_flip() + 
+  labs(title = "total words frequency in different genres")
+```
+
+Combine the two plots above, we can conclude that Pop use relatively more "love" in lyrics and R&B use relatively less "love" in lyrics.
+
+### Is there a big difference of topics in lyrics between the 20th century and 21th century?
+
+```{r, echo = FALSE}
+#data for 20th century
+nineteen_cen <- data %>% 
+  filter(year < 2000)
+#data for 21th century
+twenty_cen <- data %>% 
+  filter(year >= 2000)
+
+wordcount_nineteen <- nineteen_cen$stemmedwords %>% 
+  str_trim() %>% 
+  lapply(strsplit," ") %>% 
+  unlist() %>% table() %>% 
+  as.data.frame()
+
+colnames(wordcount_nineteen) <- c("Keyword","Freq")
+
+sorted_nineteen <- wordcount_nineteen %>% 
+  dplyr::arrange(desc(Freq))
+
+wordcount_twenty <- twenty_cen$stemmedwords %>% 
+  str_trim() %>% 
+  lapply(strsplit," ") %>% 
+  unlist() %>% table() %>% 
+  as.data.frame()
+
+colnames(wordcount_twenty) <- c("Keyword","Freq")
+
+sorted_twenty <- wordcount_twenty %>% 
+  dplyr::arrange(desc(Freq))
+
+
+wordcloud2(sorted_nineteen[1:100,], size = 0.5)
+```
+
+
+```{r, echo = FALSE}
+wordcloud2(sorted_twenty[1:100,], size = 0.5)
+
+```
+
+From the two wordclouds, we can see "love" is always the popular topic that was mentioned most frequent in lyrics for both 20th century and 21th century.
+The word "time" seems mentioned more frequent in 21th century which might mean people focus more on time recent years.
+
+### Sentiment Analysis
+
+```{r, warning=FALSE, message=FALSE, echo = FALSE}
+data_sentiment <- data %>%
+  unnest_tokens(word, stemmedwords) %>%
+  inner_join(get_sentiments("afinn"), by="word") 
+head(data_sentiment)
+```
+
+### Visualization of sentiment score against genre.
+
+```{r, warning=FALSE, message=FALSE, echo = FALSE}
+senti_genre <-
+  data_sentiment %>%
+  group_by(genre) %>%
+  dplyr::summarize(mean = mean(value))
+
+#barplot
+ggplot(data=senti_genre, aes(x= reorder(genre, mean), y=mean)) +
+  geom_bar(stat="identity") + 
+  coord_flip() + 
+  labs(title = "sentiment score against genre")
+```  
+
+From this bar plot, we can see the genre Pop has a relatively high sentiment score which means the words in Pop lyrics has relatively positive sentiment while the genre Hip-Hop has a relatively low sentiment score which means the words in Hip-Hop lyrics has relatively negative sentiment.
+In order to prove this, we can take a look at the wordcloud for this two genres.
+
+```{r, echo = FALSE}
+#data for Pop
+Pop <- data %>% 
+  filter(genre == "Pop")
+#data for Hip-hop
+Hiphop <- data %>% 
+  filter(genre == "Hip-Hop")
+
+wordcount_pop <- Pop$stemmedwords %>% 
+  str_trim() %>% 
+  lapply(strsplit," ") %>% 
+  unlist() %>% table() %>% 
+  as.data.frame()
+
+colnames(wordcount_pop) <- c("Keyword","Freq")
+
+sorted_pop <- wordcount_pop %>% 
+  dplyr::arrange(desc(Freq))
+
+wordcount_Hiphop <- Hiphop$stemmedwords %>% 
+  str_trim() %>% 
+  lapply(strsplit," ") %>% 
+  unlist() %>% table() %>% 
+  as.data.frame()
+
+colnames(wordcount_Hiphop) <- c("Keyword","Freq")
+
+sorted_hiphop <- wordcount_Hiphop %>% 
+  dplyr::arrange(desc(Freq))
+
+
+wordcloud2(sorted_pop[1:100,], size = 0.7)
+```
+
+```{r, echo = FALSE}
+wordcloud2(sorted_hiphop[1:100,], size = 0.5)
+
+```
+
+It is obvious that besides some common terms like "love" and "time", for Pop lyrics, words representing positive sentiment such as "life", "heart", "dream" and "baby" appear most frequently while for Hip-Hop lyrics, words representing negative sentiment such as "shit", "niggas", "bitch" and "ass" appear most frequently
+
